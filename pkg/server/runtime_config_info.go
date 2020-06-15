@@ -21,14 +21,25 @@ import (
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 )
 
+var UsernsMapping = &runtime.LinuxIDMapping{
+	ContainerId: uint32(0),
+	HostId:      uint32(100000),
+	Size_:       uint32(65535),
+}
+
 func (c *criService) GetRuntimeConfigInfo(_ context.Context, r *runtime.GetRuntimeConfigInfoRequest) (res *runtime.GetRuntimeConfigInfoResponse, err error) {
-	uidMapping := &runtime.LinuxIDMapping{ContainerId: uint32(0)}
-	gidMapping := &runtime.LinuxIDMapping{ContainerId: uint32(0)}
-	uidMapping.Size_ = uint32(4294967295)
-	gidMapping.Size_ = uint32(4294967295)
+	// Mapping used when we just use the host user namespace
+	// See /proc/self/uid_map on the host
+	//hostMapping := &runtime.LinuxIDMapping{
+	//	ContainerId: uint32(0),
+	//	HostId:      uint32(0),
+	//	Size_:       uint32(4294967295),
+	//}
+
+	// Example of mapping we can use in containers
 	linuxConfig := &runtime.LinuxUserNamespaceConfig{
-		UidMappings: []*runtime.LinuxIDMapping{uidMapping},
-		GidMappings: []*runtime.LinuxIDMapping{gidMapping},
+		UidMappings: []*runtime.LinuxIDMapping{UsernsMapping},
+		GidMappings: []*runtime.LinuxIDMapping{UsernsMapping},
 	}
 	activeRuntimeConfig := &runtime.ActiveRuntimeConfig{UserNamespaceConfig: linuxConfig}
 	return &runtime.GetRuntimeConfigInfoResponse{RuntimeConfig: activeRuntimeConfig}, nil

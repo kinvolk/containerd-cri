@@ -111,6 +111,8 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 	log.G(ctx).Debugf("Use OCI %+v for sandbox %q", ociRuntime, id)
 
 	securityContext := config.GetLinux().GetSecurityContext()
+	log.G(ctx).Infof("Namespace options for sandbox %q: %+v", id, securityContext.GetNamespaceOptions())
+
 	//Create Network Namespace if it is not in host network
 	hostNet := securityContext.GetNamespaceOptions().GetNetwork() == runtime.NamespaceMode_NODE
 	if !hostNet {
