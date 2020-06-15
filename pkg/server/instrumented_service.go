@@ -441,6 +441,23 @@ func (in *instrumentedService) Status(ctx context.Context, r *runtime.StatusRequ
 	return res, errdefs.ToGRPC(err)
 }
 
+// GetRuntimeConfigInfo returns the runtime config.
+func (in *instrumentedService) GetRuntimeConfigInfo(ctx context.Context, r *runtime.GetRuntimeConfigInfoRequest) (res *runtime.GetRuntimeConfigInfoResponse, err error) {
+	if err := in.checkInitialized(); err != nil {
+		return nil, err
+	}
+	log.G(ctx).Tracef("GetRuntimeConfigInfo")
+	defer func() {
+		if err != nil {
+			log.G(ctx).WithError(err).Error("GetRuntimeConfigInfo failed")
+		} else {
+			log.G(ctx).Tracef("GetRuntimeConfigInfo returns status %+v", res.GetRuntimeConfig())
+		}
+	}()
+	res, err = in.c.GetRuntimeConfigInfo(ctrdutil.WithNamespace(ctx), r)
+	return res, errdefs.ToGRPC(err)
+}
+
 func (in *instrumentedService) Version(ctx context.Context, r *runtime.VersionRequest) (res *runtime.VersionResponse, err error) {
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
