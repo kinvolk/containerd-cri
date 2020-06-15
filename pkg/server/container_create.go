@@ -174,6 +174,23 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 
 	log.G(ctx).Debugf("Container %q spec: %#+v", id, spew.NewFormatter(spec))
 
+	securityContext := config.GetLinux().GetSecurityContext()
+
+	var snapshotterOption containerd.NewContainerOpts
+	switch securityContext.GetNamespaceOptions().GetUser() {
+	case runtime.NamespaceMode_CONTAINER:
+		return nil, errors.New("unsupported user namespace mode: CONTAINER")
+	case runtime.NamespaceMode_NODE:
+		snapshotterOption = customopts.WithNewSnapshot(id, containerdImage)
+	case runtime.NamespaceMode_POD:
+		mappings := securityContext.GetNamespaceOptions().GetMapping()
+		uid := mappings.GetUidMappings()[0].GetHostId()
+		gid := mappings.GetGidMappings()[0].GetHostId()
+		snapshotterOption = customopts.WithRemappedSnapshot(id, containerdImage,uid, gid)
+	default:
+		return nil, errors.Wrapf(err, "invalid user namespace option %d for sandbox %q", securityContext.GetNamespaceOptions().GetUser(), id)
+	}
+
 	// Set snapshotter before any other options.
 	opts := []containerd.NewContainerOpts{
 		containerd.WithSnapshotter(c.config.ContainerdConfig.Snapshotter),
@@ -182,7 +199,7 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 		// the runtime (runc) a chance to modify (e.g. to create mount
 		// points corresponding to spec.Mounts) before making the
 		// rootfs readonly (requested by spec.Root.Readonly).
-		customopts.WithNewSnapshot(id, containerdImage),
+		snapshotterOption,
 	}
 	if len(volumeMounts) > 0 {
 		mountMap := make(map[string]string)

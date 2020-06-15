@@ -39,7 +39,7 @@ import (
 )
 
 func (c *criService) sandboxContainerSpec(id string, config *runtime.PodSandboxConfig,
-	imageConfig *imagespec.ImageConfig, nsPath string, runtimePodAnnotations []string) (_ *runtimespec.Spec, retErr error) {
+	imageConfig *imagespec.ImageConfig, runtimePodAnnotations []string) (_ *runtimespec.Spec, retErr error) {
 	// Creates a spec Generator with the default spec.
 	// TODO(random-liu): [P1] Compare the default settings with docker and containerd default.
 	specOpts := []oci.SpecOpts{
@@ -86,7 +86,6 @@ func (c *criService) sandboxContainerSpec(id string, config *runtime.PodSandboxC
 		specOpts = append(specOpts, oci.WithLinuxNamespace(
 			runtimespec.LinuxNamespace{
 				Type: runtimespec.NetworkNamespace,
-				Path: nsPath,
 			}))
 	}
 	if nsOptions.GetPid() == runtime.NamespaceMode_NODE {
@@ -94,6 +93,20 @@ func (c *criService) sandboxContainerSpec(id string, config *runtime.PodSandboxC
 	}
 	if nsOptions.GetIpc() == runtime.NamespaceMode_NODE {
 		specOpts = append(specOpts, customopts.WithoutNamespace(runtimespec.IPCNamespace))
+	}
+	switch nsOptions.GetUser() {
+	case runtime.NamespaceMode_NODE:
+		// nothing to do: defaultUnixNamespaces() already comes without user namespaces
+	case runtime.NamespaceMode_POD:
+		mappings := securityContext.GetNamespaceOptions().GetMapping()
+		// TODO(Mauricio): Support multiple mappings.
+		uidMap := runtimespec.LinuxIDMapping{
+			ContainerID: mappings.GetUidMappings()[0].GetContainerId(),
+			HostID: mappings.GetUidMappings()[0].GetHostId(),
+			Size: mappings.GetUidMappings()[0].GetSize_(),
+		}
+		maps := []runtimespec.LinuxIDMapping{uidMap}
+		specOpts = append(specOpts, oci.WithUserNamespace(maps, maps))
 	}
 
 	// It's fine to generate the spec before the sandbox /dev/shm
@@ -107,7 +120,14 @@ func (c *criService) sandboxContainerSpec(id string, config *runtime.PodSandboxC
 			Source:      sandboxDevShm,
 			Destination: devShm,
 			Type:        "bind",
-			Options:     []string{"rbind", "ro"},
+			Options: []string{
+				"rbind",
+				"ro",
+				"rprivate",
+				"noexec",
+				"nosuid",
+				"nodev",
+			},
 		},
 		// Add resolv.conf for katacontainers to setup the DNS of pod VM properly.
 		{
