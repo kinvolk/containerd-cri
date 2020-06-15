@@ -262,6 +262,22 @@ func (c *criService) containerSpec(id string, sandboxID string, sandboxPid uint3
 				Type: runtimespec.CgroupNamespace,
 			}))
 	}
+
+	switch securityContext.GetNamespaceOptions().GetUser() {
+	case runtime.NamespaceMode_NODE:
+		specOpts = append(specOpts, customopts.WithoutNamespace(runtimespec.UserNamespace))
+	case runtime.NamespaceMode_POD:
+		specOpts = append(specOpts, oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.UserNamespace, Path: customopts.GetUserNamespace(sandboxPid)}))
+		mappings := securityContext.GetNamespaceOptions().GetMapping()
+		// TODO(Mauricio): Support multiple mappings.
+		uidMap := runtimespec.LinuxIDMapping{
+			ContainerID: mappings.GetUidMappings()[0].GetContainerId(),
+			HostID: mappings.GetUidMappings()[0].GetHostId(),
+			Size: mappings.GetUidMappings()[0].GetSize_(),
+		}
+		maps := []runtimespec.LinuxIDMapping{uidMap}
+		specOpts = append(specOpts, oci.WithUserNamespace(maps, maps))
+	}
 	return c.runtimeSpec(id, ociRuntime.BaseRuntimeSpec, specOpts...)
 }
 
