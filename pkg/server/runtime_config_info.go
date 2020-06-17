@@ -18,13 +18,15 @@ package server
 
 import (
 	"golang.org/x/net/context"
+
+	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 )
 
-var UsernsMapping = &runtime.LinuxIDMapping{
-	ContainerId: uint32(0),
-	HostId:      uint32(100000),
-	Size_:       uint32(65535),
+var UsernsMapping = &runtimespec.LinuxIDMapping{
+	ContainerID: uint32(0),
+	HostID:      uint32(100000),
+	Size:        uint32(65535),
 }
 
 func (c *criService) GetRuntimeConfigInfo(_ context.Context, r *runtime.GetRuntimeConfigInfoRequest) (res *runtime.GetRuntimeConfigInfoResponse, err error) {
@@ -38,8 +40,20 @@ func (c *criService) GetRuntimeConfigInfo(_ context.Context, r *runtime.GetRunti
 
 	// Example of mapping we can use in containers
 	linuxConfig := &runtime.LinuxUserNamespaceConfig{
-		UidMappings: []*runtime.LinuxIDMapping{UsernsMapping},
-		GidMappings: []*runtime.LinuxIDMapping{UsernsMapping},
+		UidMappings: []*runtime.LinuxIDMapping{
+			&runtime.LinuxIDMapping{
+				ContainerId: uint32(0),
+				HostId:      uint32(100000),
+				Size_:       uint32(65535),
+			},
+		},
+		GidMappings: []*runtime.LinuxIDMapping{
+			&runtime.LinuxIDMapping{
+				ContainerId: uint32(0),
+				HostId:      uint32(100000),
+				Size_:       uint32(65535),
+			},
+		},
 	}
 	activeRuntimeConfig := &runtime.ActiveRuntimeConfig{UserNamespaceConfig: linuxConfig}
 	return &runtime.GetRuntimeConfigInfoResponse{RuntimeConfig: activeRuntimeConfig}, nil

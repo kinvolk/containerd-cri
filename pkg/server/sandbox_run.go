@@ -154,6 +154,20 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 		}()
 	}
 
+	switch securityContext.GetNamespaceOptions().GetUser() {
+	case runtime.NamespaceMode_POD:
+		return nil, errors.New("unsupported user namespace mode: POD")
+	case runtime.NamespaceMode_CONTAINER:
+		return nil, errors.New("unsupported user namespace mode: CONTAINER")
+	case runtime.NamespaceMode_NODE:
+		// Nothing to do
+	case runtime.NamespaceMode_NODE_WIDE_REMAPPED:
+		// Nothing to do
+		//return nil, errors.New("unsupported user namespace mode: NODE_WIDE_REMAPPED")
+	default:
+		return nil, errors.Wrapf(err, "invalid user namespace option %d for sandbox %q", securityContext.GetNamespaceOptions().GetUser(), id)
+	}
+
 	// Create sandbox container.
 	spec, err := c.generateSandboxContainerSpec(id, config, &image.ImageSpec.Config, sandbox.NetNSPath, ociRuntime.PodAnnotations)
 	if err != nil {
@@ -388,6 +402,27 @@ func (c *criService) generateSandboxContainerSpec(id string, config *runtime.Pod
 	}
 	if nsOptions.GetIpc() == runtime.NamespaceMode_NODE {
 		specOpts = append(specOpts, customopts.WithoutNamespace(runtimespec.IPCNamespace))
+	}
+	if nsOptions.GetUser() == runtime.NamespaceMode_NODE {
+		specOpts = append(specOpts, customopts.WithoutNamespace(runtimespec.UserNamespace))
+	}
+	switch nsOptions.GetUser() {
+	case runtime.NamespaceMode_NODE:
+		// nothing to do: defaultUnixNamespaces() already comes without user namespaces
+	case runtime.NamespaceMode_NODE_WIDE_REMAPPED:
+		// TODO(Alban): reuse existing userns here
+		fallthrough
+	case runtime.NamespaceMode_POD:
+		// When re-vendoring vendor/github.com/containerd/containerd/oci/spec_opts.go,
+		// the following line would need to be updated to:
+		// specOpts = append(specOpts, oci.WithUserNamespace(UsernsMapping, UsernsMapping))
+		// See:
+		// https://github.com/containerd/containerd/commit/51a6813c06030ae2b3fcf9ec068e4b39cd2d1e69
+		specOpts = append(specOpts, oci.WithUserNamespace(
+			UsernsMapping.ContainerID,
+			UsernsMapping.HostID,
+			UsernsMapping.Size,
+		))
 	}
 
 	// It's fine to generate the spec before the sandbox /dev/shm
