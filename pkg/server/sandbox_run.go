@@ -154,20 +154,6 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 		}()
 	}
 
-	switch securityContext.GetNamespaceOptions().GetUser() {
-	case runtime.NamespaceMode_POD:
-		return nil, errors.New("unsupported user namespace mode: POD")
-	case runtime.NamespaceMode_CONTAINER:
-		return nil, errors.New("unsupported user namespace mode: CONTAINER")
-	case runtime.NamespaceMode_NODE:
-		// Nothing to do
-	case runtime.NamespaceMode_NODE_WIDE_REMAPPED:
-		// Nothing to do
-		//return nil, errors.New("unsupported user namespace mode: NODE_WIDE_REMAPPED")
-	default:
-		return nil, errors.Wrapf(err, "invalid user namespace option %d for sandbox %q", securityContext.GetNamespaceOptions().GetUser(), id)
-	}
-
 	// Create sandbox container.
 	spec, err := c.generateSandboxContainerSpec(id, config, &image.ImageSpec.Config, sandbox.NetNSPath, ociRuntime.PodAnnotations)
 	if err != nil {
@@ -206,13 +192,31 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 
 	sandboxLabels := buildLabels(config.Labels, containerKindSandbox)
 
+	var snapshotterOption containerd.NewContainerOpts
+	switch securityContext.GetNamespaceOptions().GetUser() {
+	case runtime.NamespaceMode_POD:
+		return nil, errors.New("unsupported user namespace mode: POD")
+	case runtime.NamespaceMode_CONTAINER:
+		return nil, errors.New("unsupported user namespace mode: CONTAINER")
+	case runtime.NamespaceMode_NODE:
+		snapshotterOption = customopts.WithNewSnapshot(id, containerdImage)
+	case runtime.NamespaceMode_NODE_WIDE_REMAPPED:
+		shiftID := UsernsMapping.HostID
+		if UsernsMapping.ContainerID != 0 {
+			return nil, errors.New("unsupported uid shift")
+		}
+		snapshotterOption = customopts.WithRemappedSnapshot(id, containerdImage, shiftID, shiftID)
+	default:
+		return nil, errors.Wrapf(err, "invalid user namespace option %d for sandbox %q", securityContext.GetNamespaceOptions().GetUser(), id)
+	}
+
 	runtimeOpts, err := generateRuntimeOptions(ociRuntime, c.config)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to generate runtime options")
 	}
 	opts := []containerd.NewContainerOpts{
 		containerd.WithSnapshotter(c.config.ContainerdConfig.Snapshotter),
-		customopts.WithNewSnapshot(id, containerdImage),
+		snapshotterOption,
 		containerd.WithSpec(spec, specOpts...),
 		containerd.WithContainerLabels(sandboxLabels),
 		containerd.WithContainerExtension(sandboxMetadataExtension, &sandbox.Metadata),
