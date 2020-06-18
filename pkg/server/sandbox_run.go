@@ -445,7 +445,14 @@ func (c *criService) generateSandboxContainerSpec(id string, config *runtime.Pod
 			Source:      sandboxDevShm,
 			Destination: devShm,
 			Type:        "bind",
-			Options:     []string{"rbind", "ro"},
+			Options: []string{
+				"rbind",
+				"ro",
+				"rprivate",
+				"noexec",
+				"nosuid",
+				"nodev",
+			},
 		},
 	}))
 
