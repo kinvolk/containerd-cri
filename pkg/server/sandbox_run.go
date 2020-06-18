@@ -113,49 +113,8 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 	securityContext := config.GetLinux().GetSecurityContext()
 	log.G(ctx).Infof("Namespace options for sandbox %q: %+v", id, securityContext.GetNamespaceOptions())
 
-	//Create Network Namespace if it is not in host network
-	hostNet := securityContext.GetNamespaceOptions().GetNetwork() == runtime.NamespaceMode_NODE
-	if !hostNet {
-		// If it is not in host network namespace then create a namespace and set the sandbox
-		// handle. NetNSPath in sandbox metadata and NetNS is non empty only for non host network
-		// namespaces. If the pod is in host network namespace then both are empty and should not
-		// be used.
-		sandbox.NetNS, err = netns.NewNetNS()
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to create network namespace for sandbox %q", id)
-		}
-		sandbox.NetNSPath = sandbox.NetNS.GetPath()
-		defer func() {
-			if retErr != nil {
-				if err := sandbox.NetNS.Remove(); err != nil {
-					log.G(ctx).WithError(err).Errorf("Failed to remove network namespace %s for sandbox %q", sandbox.NetNSPath, id)
-				}
-				sandbox.NetNSPath = ""
-			}
-		}()
-		// Setup network for sandbox.
-		// Certain VM based solutions like clear containers (Issue containerd/cri-containerd#524)
-		// rely on the assumption that CRI shim will not be querying the network namespace to check the
-		// network states such as IP.
-		// In future runtime implementation should avoid relying on CRI shim implementation details.
-		// In this case however caching the IP will add a subtle performance enhancement by avoiding
-		// calls to network namespace of the pod to query the IP of the veth interface on every
-		// SandboxStatus request.
-		if err := c.setupPodNetwork(ctx, &sandbox); err != nil {
-			return nil, errors.Wrapf(err, "failed to setup network for sandbox %q", id)
-		}
-		defer func() {
-			if retErr != nil {
-				// Teardown network if an error is returned.
-				if err := c.teardownPodNetwork(ctx, sandbox); err != nil {
-					log.G(ctx).WithError(err).Errorf("Failed to destroy network for sandbox %q", id)
-				}
-			}
-		}()
-	}
-
 	// Create sandbox container.
-	spec, err := c.generateSandboxContainerSpec(id, config, &image.ImageSpec.Config, sandbox.NetNSPath, ociRuntime.PodAnnotations)
+	spec, err := c.generateSandboxContainerSpec(id, config, &image.ImageSpec.Config, ociRuntime.PodAnnotations)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to generate sandbox container spec")
 	}
@@ -320,6 +279,53 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 		return nil, errors.Wrapf(err, "failed to start sandbox container task %q", id)
 	}
 
+	// Setup network namespace. When using a new user namespace, this has
+	// to be done after the netns and userns are created, otherwise runc
+	// will not be able to mount sysfs.
+	// See:
+	// https://github.com/torvalds/linux/commit/7dc5dbc879bd0779924b5132a48b731a0bc04a1e#diff-4839664cd0c8eab716e064323c7cd71fR1164
+
+	hostNet := securityContext.GetNamespaceOptions().GetNetwork() == runtime.NamespaceMode_NODE
+	if !hostNet {
+		// If it is not in host network namespace then a new namespace
+		// has been created and set the sandbox handle. NetNSPath in
+		// sandbox metadata and NetNS is non empty only for non host
+		// network namespaces. If the pod is in host network namespace
+		// then both are empty and should not be used.
+		sandbox.NetNS, err = netns.NetNSFromPID(task.Pid())
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to create network namespace for sandbox %q", id)
+		}
+		sandbox.NetNSPath = sandbox.NetNS.GetPath()
+		defer func() {
+			if retErr != nil {
+				if err := sandbox.NetNS.Remove(); err != nil {
+					log.G(ctx).WithError(err).Errorf("Failed to remove network namespace %s for sandbox %q", sandbox.NetNSPath, id)
+				}
+				sandbox.NetNSPath = ""
+			}
+		}()
+		// Setup network for sandbox.
+		// Certain VM based solutions like clear containers (Issue containerd/cri-containerd#524)
+		// rely on the assumption that CRI shim will not be querying the network namespace to check the
+		// network states such as IP.
+		// In future runtime implementation should avoid relying on CRI shim implementation details.
+		// In this case however caching the IP will add a subtle performance enhancement by avoiding
+		// calls to network namespace of the pod to query the IP of the veth interface on every
+		// SandboxStatus request.
+		if err := c.setupPodNetwork(ctx, &sandbox); err != nil {
+			return nil, errors.Wrapf(err, "failed to setup network for sandbox %q", id)
+		}
+		defer func() {
+			if retErr != nil {
+				// Teardown network if an error is returned.
+				if err := c.teardownPodNetwork(ctx, sandbox); err != nil {
+					log.G(ctx).WithError(err).Errorf("Failed to destroy network for sandbox %q", id)
+				}
+			}
+		}()
+	}
+
 	if err := sandbox.Status.Update(func(status sandboxstore.Status) (sandboxstore.Status, error) {
 		// Set the pod sandbox as ready after successfully start sandbox container.
 		status.Pid = task.Pid()
@@ -348,7 +354,7 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 }
 
 func (c *criService) generateSandboxContainerSpec(id string, config *runtime.PodSandboxConfig,
-	imageConfig *imagespec.ImageConfig, nsPath string, runtimePodAnnotations []string) (*runtimespec.Spec, error) {
+	imageConfig *imagespec.ImageConfig, runtimePodAnnotations []string) (*runtimespec.Spec, error) {
 	// Creates a spec Generator with the default spec.
 	// TODO(random-liu): [P1] Compare the default settings with docker and containerd default.
 	specOpts := []oci.SpecOpts{
@@ -398,7 +404,6 @@ func (c *criService) generateSandboxContainerSpec(id string, config *runtime.Pod
 		specOpts = append(specOpts, oci.WithLinuxNamespace(
 			runtimespec.LinuxNamespace{
 				Type: runtimespec.NetworkNamespace,
-				Path: nsPath,
 			}))
 	}
 	if nsOptions.GetPid() == runtime.NamespaceMode_NODE {
