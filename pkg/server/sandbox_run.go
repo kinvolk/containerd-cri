@@ -153,13 +153,13 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 
 	var snapshotterOption containerd.NewContainerOpts
 	switch securityContext.GetNamespaceOptions().GetUser() {
-	case runtime.NamespaceMode_POD:
-		return nil, errors.New("unsupported user namespace mode: POD")
 	case runtime.NamespaceMode_CONTAINER:
 		return nil, errors.New("unsupported user namespace mode: CONTAINER")
 	case runtime.NamespaceMode_NODE:
 		snapshotterOption = customopts.WithNewSnapshot(id, containerdImage)
 	case runtime.NamespaceMode_NODE_WIDE_REMAPPED:
+		fallthrough
+	case runtime.NamespaceMode_POD:
 		shiftID := UsernsMapping.HostID
 		if UsernsMapping.ContainerID != 0 {
 			return nil, errors.New("unsupported uid shift")
@@ -551,6 +551,10 @@ func (c *criService) setupSandboxFiles(id string, config *runtime.PodSandboxConf
 		shmproperty := fmt.Sprintf("mode=1777,size=%d", defaultShmSize)
 		if err := c.os.Mount("shm", sandboxDevShm, "tmpfs", uintptr(unix.MS_NOEXEC|unix.MS_NOSUID|unix.MS_NODEV), shmproperty); err != nil {
 			return errors.Wrap(err, "failed to mount sandbox shm")
+		}
+		uid := int(UsernsMapping.HostID)
+		if err := os.Chown(sandboxDevShm, uid, uid); err != nil {
+			return errors.Wrap(err, "failed to chmod sandbox shm")
 		}
 	}
 
