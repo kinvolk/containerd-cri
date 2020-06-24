@@ -461,6 +461,7 @@ func (c *criService) generateContainerSpec(id string, sandboxID string, sandboxP
 	case runtime.NamespaceMode_NODE_WIDE_REMAPPED:
 		fallthrough
 	case runtime.NamespaceMode_POD:
+		specOpts = append(specOpts, oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.UserNamespace, Path: customopts.GetUserNamespace(sandboxPid)}))
 		// When re-vendoring vendor/github.com/containerd/containerd/oci/spec_opts.go,
 		// the following line would need to be updated to:
 		// specOpts = append(specOpts, oci.WithUserNamespace(uidMap, gidMap))

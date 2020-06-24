@@ -649,9 +649,6 @@ func WithPodNamespaces(config *runtime.LinuxContainerSecurityContext, pid uint32
 	if namespaces.GetPid() != runtime.NamespaceMode_CONTAINER {
 		opts = append(opts, oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.PIDNamespace, Path: GetPIDNamespace(pid)}))
 	}
-	if namespaces.GetUser() != runtime.NamespaceMode_CONTAINER {
-		opts = append(opts, oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.UserNamespace, Path: GetUserNamespace(pid)}))
-	}
 	return oci.Compose(opts...)
 }
 
