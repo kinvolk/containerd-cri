@@ -158,7 +158,7 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 	case runtime.NamespaceMode_NODE:
 		snapshotterOption = customopts.WithNewSnapshot(id, containerdImage)
 	case runtime.NamespaceMode_NODE_WIDE_REMAPPED:
-		fallthrough
+		return nil, errors.New("unsupported user namespace mode: NODE_WIDE_REMAPPED")
 	case runtime.NamespaceMode_POD:
 		snapshotterOption = customopts.WithRemappedSnapshot(id, containerdImage,
 			c.config.NodeWideUIDMapping.HostID-c.config.NodeWideUIDMapping.ContainerID,
@@ -417,8 +417,7 @@ func (c *criService) generateSandboxContainerSpec(id string, config *runtime.Pod
 	case runtime.NamespaceMode_NODE:
 		// nothing to do: defaultUnixNamespaces() already comes without user namespaces
 	case runtime.NamespaceMode_NODE_WIDE_REMAPPED:
-		// TODO(Alban): reuse existing userns here
-		fallthrough
+		return nil, errors.New("unsupported user namespace mode: NODE_WIDE_REMAPPED")
 	case runtime.NamespaceMode_POD:
 		// When re-vendoring vendor/github.com/containerd/containerd/oci/spec_opts.go,
 		// the following line would need to be updated to:
