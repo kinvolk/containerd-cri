@@ -160,11 +160,9 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 	case runtime.NamespaceMode_NODE_WIDE_REMAPPED:
 		fallthrough
 	case runtime.NamespaceMode_POD:
-		shiftID := UsernsMapping.HostID
-		if UsernsMapping.ContainerID != 0 {
-			return nil, errors.New("unsupported uid shift")
-		}
-		snapshotterOption = customopts.WithRemappedSnapshot(id, containerdImage, shiftID, shiftID)
+		snapshotterOption = customopts.WithRemappedSnapshot(id, containerdImage,
+			c.config.NodeWideUIDMapping.HostID-c.config.NodeWideUIDMapping.ContainerID,
+			c.config.NodeWideGIDMapping.HostID-c.config.NodeWideGIDMapping.ContainerID)
 	default:
 		return nil, errors.Wrapf(err, "invalid user namespace option %d for sandbox %q", securityContext.GetNamespaceOptions().GetUser(), id)
 	}
@@ -424,13 +422,13 @@ func (c *criService) generateSandboxContainerSpec(id string, config *runtime.Pod
 	case runtime.NamespaceMode_POD:
 		// When re-vendoring vendor/github.com/containerd/containerd/oci/spec_opts.go,
 		// the following line would need to be updated to:
-		// specOpts = append(specOpts, oci.WithUserNamespace(UsernsMapping, UsernsMapping))
+		// specOpts = append(specOpts, oci.WithUserNamespace(uidMap, gidMap))
 		// See:
 		// https://github.com/containerd/containerd/commit/51a6813c06030ae2b3fcf9ec068e4b39cd2d1e69
 		specOpts = append(specOpts, oci.WithUserNamespace(
-			UsernsMapping.ContainerID,
-			UsernsMapping.HostID,
-			UsernsMapping.Size,
+			c.config.NodeWideUIDMapping.ContainerID,
+			c.config.NodeWideUIDMapping.HostID,
+			c.config.NodeWideUIDMapping.Size,
 		))
 	}
 
@@ -552,8 +550,9 @@ func (c *criService) setupSandboxFiles(id string, config *runtime.PodSandboxConf
 		if err := c.os.Mount("shm", sandboxDevShm, "tmpfs", uintptr(unix.MS_NOEXEC|unix.MS_NOSUID|unix.MS_NODEV), shmproperty); err != nil {
 			return errors.Wrap(err, "failed to mount sandbox shm")
 		}
-		uid := int(UsernsMapping.HostID)
-		if err := os.Chown(sandboxDevShm, uid, uid); err != nil {
+		uid := int(c.config.NodeWideUIDMapping.HostID)
+		gid := int(c.config.NodeWideGIDMapping.HostID)
+		if err := os.Chown(sandboxDevShm, uid, gid); err != nil {
 			return errors.Wrap(err, "failed to chmod sandbox shm")
 		}
 	}
