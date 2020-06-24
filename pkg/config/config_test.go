@@ -320,6 +320,47 @@ func TestValidateConfig(t *testing.T) {
 			},
 			expectedErr: "invalid stream idle timeout",
 		},
+		"valid id mapping": {
+			config: &PluginConfig{
+				ContainerdConfig: ContainerdConfig{
+					DefaultRuntimeName: RuntimeDefault,
+					Runtimes: map[string]Runtime{
+						RuntimeDefault: {
+							Type: plugin.RuntimeLinuxV1,
+						},
+					},
+				},
+				NodeWideUIDMapping: LinuxIDMapping{0, 800000, 65536},
+				NodeWideGIDMapping: LinuxIDMapping{0, 800000, 65536},
+			},
+			expected: &PluginConfig{
+				ContainerdConfig: ContainerdConfig{
+					DefaultRuntimeName: RuntimeDefault,
+					Runtimes: map[string]Runtime{
+						RuntimeDefault: {
+							Type: plugin.RuntimeLinuxV1,
+						},
+					},
+				},
+				NodeWideUIDMapping: LinuxIDMapping{0, 800000, 65536},
+				NodeWideGIDMapping: LinuxIDMapping{0, 800000, 65536},
+			},
+		},
+		"invalid id mapping": {
+			config: &PluginConfig{
+				ContainerdConfig: ContainerdConfig{
+					DefaultRuntimeName: RuntimeDefault,
+					Runtimes: map[string]Runtime{
+						RuntimeDefault: {
+							Type: plugin.RuntimeLinuxV1,
+						},
+					},
+				},
+				NodeWideUIDMapping: LinuxIDMapping{1, 100000, 65536},
+				NodeWideGIDMapping: LinuxIDMapping{1, 100000, 65536},
+			},
+			expectedErr: "missing root id in container",
+		},
 	} {
 		t.Run(desc, func(t *testing.T) {
 			err := ValidatePluginConfig(context.Background(), test.config)
