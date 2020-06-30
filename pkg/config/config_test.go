@@ -361,6 +361,21 @@ func TestValidateConfig(t *testing.T) {
 			},
 			expectedErr: "missing root id in container",
 		},
+		"different uid and gid mappings": {
+			config: &PluginConfig{
+				ContainerdConfig: ContainerdConfig{
+					DefaultRuntimeName: RuntimeDefault,
+					Runtimes: map[string]Runtime{
+						RuntimeDefault: {
+							Type: plugin.RuntimeLinuxV1,
+						},
+					},
+				},
+				NodeWideUIDMapping: LinuxIDMapping{0, 100000, 65536},
+				NodeWideGIDMapping: LinuxIDMapping{0, 200000, 65536},
+			},
+			expectedErr: "different mappings for uid and gid not yet supported",
+		},
 	} {
 		t.Run(desc, func(t *testing.T) {
 			err := ValidatePluginConfig(context.Background(), test.config)
