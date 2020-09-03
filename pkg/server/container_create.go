@@ -17,7 +17,9 @@ limitations under the License.
 package server
 
 import (
+	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +44,8 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+
+	"github.com/opencontainers/runc/libcontainer/system"
 )
 
 const (
@@ -175,6 +179,30 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 
 	log.G(ctx).Debugf("Container %q spec: %#+v", id, spew.NewFormatter(spec))
 
+	securityContext := config.GetLinux().GetSecurityContext()
+
+	if securityContext.GetNamespaceOptions().GetUser() == runtime.NamespaceMode_POD {
+		if err := checkMounts(c.config.NodeWideUIDMapping.HostID,
+			c.config.NodeWideGIDMapping.HostID, spec.Mounts); err != nil {
+				return nil, err
+			}
+
+	}
+
+	var snapshotterOption containerd.NewContainerOpts
+	switch securityContext.GetNamespaceOptions().GetUser() {
+	case runtime.NamespaceMode_CONTAINER:
+		return nil, errors.New("unsupported user namespace mode: CONTAINER")
+	case runtime.NamespaceMode_NODE:
+		snapshotterOption = customopts.WithNewSnapshot(id, containerdImage)
+	case runtime.NamespaceMode_POD:
+		snapshotterOption = customopts.WithRemappedSnapshot(id, containerdImage,
+			c.config.NodeWideUIDMapping.HostID-c.config.NodeWideUIDMapping.ContainerID,
+			c.config.NodeWideGIDMapping.HostID-c.config.NodeWideGIDMapping.ContainerID)
+	default:
+		return nil, errors.Wrapf(err, "invalid user namespace option %d for sandbox %q", securityContext.GetNamespaceOptions().GetUser(), id)
+	}
+
 	// Set snapshotter before any other options.
 	opts := []containerd.NewContainerOpts{
 		containerd.WithSnapshotter(c.config.ContainerdConfig.Snapshotter),
@@ -183,7 +211,7 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 		// the runtime (runc) a chance to modify (e.g. to create mount
 		// points corresponding to spec.Mounts) before making the
 		// rootfs readonly (requested by spec.Root.Readonly).
-		customopts.WithNewSnapshot(id, containerdImage),
+		snapshotterOption,
 	}
 
 	if len(volumeMounts) > 0 {
@@ -220,7 +248,6 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 	}()
 
 	var specOpts []oci.SpecOpts
-	securityContext := config.GetLinux().GetSecurityContext()
 	// Set container username. This could only be done by containerd, because it needs
 	// access to the container rootfs. Pass user name to containerd, and let it overwrite
 	// the spec for us.
@@ -438,6 +465,23 @@ func (c *criService) generateContainerSpec(id string, sandboxID string, sandboxP
 		customopts.WithAnnotation(annotations.SandboxID, sandboxID),
 	)
 
+	switch securityContext.GetNamespaceOptions().GetUser() {
+	case runtime.NamespaceMode_NODE:
+		specOpts = append(specOpts, customopts.WithoutNamespace(runtimespec.UserNamespace))
+	case runtime.NamespaceMode_POD:
+		specOpts = append(specOpts, oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.UserNamespace, Path: customopts.GetUserNamespace(sandboxPid)}))
+		// When re-vendoring vendor/github.com/containerd/containerd/oci/spec_opts.go,
+		// the following line would need to be updated to:
+		// specOpts = append(specOpts, oci.WithUserNamespace(uidMap, gidMap))
+		// See:
+		// https://github.com/containerd/containerd/commit/51a6813c06030ae2b3fcf9ec068e4b39cd2d1e69
+		specOpts = append(specOpts, oci.WithUserNamespace(
+			c.config.NodeWideUIDMapping.ContainerID,
+			c.config.NodeWideUIDMapping.HostID,
+			c.config.NodeWideUIDMapping.Size,
+		))
+	}
+
 	return runtimeSpec(id, specOpts...)
 }
 
@@ -634,4 +678,57 @@ func generateUserString(username string, uid, gid *runtime.Int64Value) (string, 
 		userstr = userstr + ":" + groupstr
 	}
 	return userstr, nil
+}
+
+// checkMounts verifies that the user is able to stat the sources of the
+// paths to mount.
+func checkMounts(uid, gid uint32, mounts []runtimespec.Mount) error {
+	c := make(chan error)
+	go doCheckMounts(uid, gid, mounts, c)
+
+	return <- c
+}
+
+func doCheckMounts(uid, gid uint32, mounts []runtimespec.Mount, c chan error)  {
+	goruntime.LockOSThread()
+	// Do not call goruntime.UnLockOSThread because it'll make the thread
+	// usable by other goroutines but it'll be running in a wrong uid/gid.
+	// Avoiding that call causes the thread to terminate instead.
+
+	// set uid to nobody to check if group access is ok
+	if err := system.Setgid(int(gid)); err != nil {
+		c <- err
+	}
+
+	if err := system.Setuid(int(uid)); err != nil {
+		c <- err
+	}
+
+	for _, m := range mounts {
+		if m.Type != "bind" {
+			continue
+		}
+		if str := checkMountPath(m.Source); str != "" {
+			c <- errors.Errorf("cannot stat %q while running with uid %d and gid %d. Check file permissions or supplementary groups",
+				str, uid, gid)
+			return
+		}
+	}
+
+	c <- nil
+}
+
+func checkMountPath(path string) string {
+	pathList := strings.Split(path, string(os.PathSeparator))
+
+	pathTemp := pathList[0]
+
+	for _, p := range pathList[1:] {
+		pathTemp = pathTemp + string(os.PathSeparator) + p
+		if _, err := os.Stat(pathTemp); err != nil {
+			return pathTemp
+		}
+	}
+
+	return ""
 }
