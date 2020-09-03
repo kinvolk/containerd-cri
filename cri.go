@@ -75,6 +75,7 @@ func initCRIService(ic *plugin.InitContext) (interface{}, error) {
 		StateDir:           ic.State,
 	}
 	log.G(ctx).Infof("Start cri plugin with config %+v", c)
+	log.G(ctx).Infof("cri plugin compiled with with user namespaces support")
 
 	if err := setGLogLevel(); err != nil {
 		return nil, errors.Wrap(err, "failed to set glog level")
