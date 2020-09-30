@@ -184,9 +184,35 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 		snapshotterOption = customopts.WithNewSnapshot(id, containerdImage)
 	case runtime.NamespaceMode_POD:
 		mappings := securityContext.GetNamespaceOptions().GetMapping()
-		uid := mappings.GetUidMappings()[0].GetHostId()
-		gid := mappings.GetGidMappings()[0].GetHostId()
-		snapshotterOption = customopts.WithRemappedSnapshot(id, containerdImage,uid, gid)
+		if mappings == nil {
+			return nil, errors.New("missing user namespace mappings")
+		}
+		var uidFound bool
+		var uid uint32
+
+		for _, mapping := range mappings.UidMappings {
+			if mapping.GetContainerId() == 0 {
+				uid = mapping.GetHostId()
+				uidFound = true
+				break
+			}
+		}
+
+		var gidFound bool
+		var gid uint32
+		for _, mapping := range mappings.GidMappings {
+			if mapping.GetContainerId() == 0 {
+				gid = mapping.GetHostId()
+				gidFound = true
+				break
+			}
+		}
+
+		if !uidFound || !gidFound {
+			return nil, errors.New("root inside container not mapped to host")
+		}
+
+		snapshotterOption = customopts.WithRemappedSnapshot(id, containerdImage, uint32(uid), uint32(gid))
 	default:
 		return nil, errors.Wrapf(err, "invalid user namespace option %d for sandbox %q", securityContext.GetNamespaceOptions().GetUser(), id)
 	}

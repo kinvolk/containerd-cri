@@ -99,14 +99,26 @@ func (c *criService) sandboxContainerSpec(id string, config *runtime.PodSandboxC
 		// nothing to do: defaultUnixNamespaces() already comes without user namespaces
 	case runtime.NamespaceMode_POD:
 		mappings := securityContext.GetNamespaceOptions().GetMapping()
-		// TODO(Mauricio): Support multiple mappings.
-		uidMap := runtimespec.LinuxIDMapping{
-			ContainerID: mappings.GetUidMappings()[0].GetContainerId(),
-			HostID: mappings.GetUidMappings()[0].GetHostId(),
-			Size: mappings.GetUidMappings()[0].GetSize_(),
+		if mappings == nil {
+			return nil, errors.New("missing user namespace mappings")
 		}
-		maps := []runtimespec.LinuxIDMapping{uidMap}
-		specOpts = append(specOpts, oci.WithUserNamespace(maps, maps))
+		uidMaps := make([]runtimespec.LinuxIDMapping, len(mappings.UidMappings))
+		for i, mapping := range mappings.UidMappings {
+			uidMaps[i] = runtimespec.LinuxIDMapping{
+				ContainerID: mapping.GetContainerId(),
+				HostID: mapping.GetHostId(),
+				Size: mapping.GetSize_(),
+			}
+		}
+		gidMaps := make([]runtimespec.LinuxIDMapping, len(mappings.GidMappings))
+		for i, mapping := range mappings.GidMappings {
+			gidMaps[i] = runtimespec.LinuxIDMapping{
+				ContainerID: mapping.GetContainerId(),
+				HostID: mapping.GetHostId(),
+				Size: mapping.GetSize_(),
+			}
+		}
+		specOpts = append(specOpts, oci.WithUserNamespace(uidMaps, gidMaps))
 	}
 
 	// It's fine to generate the spec before the sandbox /dev/shm
