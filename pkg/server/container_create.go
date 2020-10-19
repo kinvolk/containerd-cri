@@ -160,6 +160,15 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 		return nil, errors.Wrapf(err, "failed to generate container %q spec", id)
 	}
 
+	// Hardcoded seccomp hook
+	hook := runtimespec.Hook {
+		Path: "/tmp/seccomphook",
+		Args: []string{"seccomphook"},
+	}
+	spec.Hooks = &runtimespec.Hooks {
+		SendSeccompFd: []runtimespec.Hook{hook},
+	}
+
 	meta.ProcessLabel = spec.Process.SelinuxLabel
 
 	// handle any KVM based runtime

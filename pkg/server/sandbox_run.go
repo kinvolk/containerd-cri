@@ -45,6 +45,8 @@ import (
 	sandboxstore "github.com/containerd/cri/pkg/store/sandbox"
 	"github.com/containerd/cri/pkg/util"
 	selinux "github.com/opencontainers/selinux/go-selinux"
+
+	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
 )
 
 func init() {
@@ -159,6 +161,16 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to generate sandbox container spec")
 	}
+
+	// Hardcoded seccomp hook
+	hook := runtimespec.Hook {
+		Path: "/tmp/seccomphook",
+		Args: []string{"seccomphook"},
+	}
+	spec.Hooks = &runtimespec.Hooks {
+		SendSeccompFd: []runtimespec.Hook{hook},
+	}
+
 	log.G(ctx).Debugf("Sandbox container %q spec: %#+v", id, spew.NewFormatter(spec))
 	sandbox.ProcessLabel = spec.Process.SelinuxLabel
 	defer func() {
